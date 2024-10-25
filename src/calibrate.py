@@ -31,12 +31,15 @@ def detect_ellipses(image: Union[np.ndarray, cv2.Mat]) -> list[dict[str, float |
     # Create a mask for detecting the tennis ball's color
     blurred = cv2.GaussianBlur(image, (5, 5), 0)
     hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
-    cv2.imshow("hsv", hsv)
-    mask = cv2.inRange(hsv, lower_green, upper_green)
-    mask = cv2.erode(mask, None, iterations=2)
-    mask = cv2.dilate(mask, None, iterations=4)
+    mask_green = cv2.inRange(hsv, lower_green, upper_green)
+    mask_green = cv2.erode(mask_green, None, iterations=2)
+    mask_green = cv2.dilate(mask_green, None, iterations=4)
+    kernel = np.ones((10,10),np.uint8)
+    mask_green = cv2.morphologyEx(mask_green, cv2.MORPH_CLOSE, kernel)
+    cv2.imshow("mask_green", mask_green)
+
     # Find contours in the image
-    contours, _ = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(mask_green.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     ellipses = []
 
@@ -65,7 +68,7 @@ def detect_ellipses(image: Union[np.ndarray, cv2.Mat]) -> list[dict[str, float |
             cv2.ellipse(image, ellipse, (0, 255, 0), 2)
 
             radius = get_ellipse_direction_radius(angle, center, image, width, height)
-            print(f"Longest Radius in direction of camera center: {radius}")
+            print(f"Ball radius in direction of camera center: {radius}")
 
     # Display the result
     cv2.imshow("Ellipses Detected", image)
