@@ -29,14 +29,12 @@ def detect_ellipses(image: Union[np.ndarray, cv2.Mat]) -> list[dict[str, float |
     upper_green = np.array([64, 255, 255])
 
     # Create a mask for detecting the tennis ball's color
-
-    # Apply GaussianBlur to reduce noise and improve edge detection
     blurred = cv2.GaussianBlur(image, (5, 5), 0)
     hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
+    cv2.imshow("hsv", hsv)
     mask = cv2.inRange(hsv, lower_green, upper_green)
     mask = cv2.erode(mask, None, iterations=2)
     mask = cv2.dilate(mask, None, iterations=4)
-    cv2.imshow("mask", mask)
     # Find contours in the image
     contours, _ = cv2.findContours(mask.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -46,22 +44,28 @@ def detect_ellipses(image: Union[np.ndarray, cv2.Mat]) -> list[dict[str, float |
     for contour in contours:
         # Only fit ellipses to contours that have more than 5 points
         if len(contour) >= 5:
+
             # Fit an ellipse to the contour
             ellipse = cv2.fitEllipse(contour)
             (center, (width, height), angle) = ellipse
 
             # Filter out ellipses based on size and roundness (tennis ball is almost round)
             aspect_ratio = width / height if width > height else height / width
-            if 0.96 < aspect_ratio < 1.01:  # Adjust size threshold based on your image
+            print(f"aspect ratio: {aspect_ratio}")
+            if 0.7 < aspect_ratio < 1.3:  # Adjust size threshold based on your image
                 ellipses.append({
                     "center": center,
                     "width": width,
                     "height": height,
                     "angle": angle
                 })
-
+            else:
+                continue
             # Draw the ellipse on the image for visualization (optional)
             cv2.ellipse(image, ellipse, (0, 255, 0), 2)
+
+            radius = get_ellipse_direction_radius(angle, center, image, width, height)
+            print(f"Longest Radius in direction of camera center: {radius}")
 
     # Display the result
     cv2.imshow("Ellipses Detected", image)
@@ -69,6 +73,61 @@ def detect_ellipses(image: Union[np.ndarray, cv2.Mat]) -> list[dict[str, float |
     cv2.destroyAllWindows()
 
     return ellipses
+
+
+def get_ellipse_direction_radius(angle, center, image, width, height):
+    # Calculate the direction vector from image center to ellipse center
+    image_center = (image.shape[1] // 2, image.shape[0] // 2)
+    direction_vector = (image_center[0] - center[0], image_center[1] - center[1])
+
+    # Convert angle to radians for trigonometric functions
+    angle_rad = np.deg2rad(angle)
+
+    # Major axis vector (based on the longer dimension of the ellipse)
+    major_axis_vector = (np.cos(angle_rad) * width / 2, np.sin(angle_rad) * width / 2)
+
+    # Minor axis vector (based on the shorter dimension of the ellipse)
+    minor_axis_vector = (-np.sin(angle_rad) * height / 2, np.cos(angle_rad) * height / 2)
+
+    # Normalize the direction vector
+    direction_magnitude = np.linalg.norm(direction_vector)
+    normalized_direction_vector = (direction_vector[0] / direction_magnitude, direction_vector[1] / direction_magnitude)
+
+    # Project the normalized direction vector onto the major and minor axes
+    projection_major = np.dot(normalized_direction_vector, major_axis_vector) / np.linalg.norm(major_axis_vector)
+    projection_minor = np.dot(normalized_direction_vector, minor_axis_vector) / np.linalg.norm(minor_axis_vector)
+
+    # Calculate the final endpoint along the major or minor axis based on the larger projection
+    if abs(projection_major) > abs(projection_minor):
+        end_point = (
+            int(center[0] + major_axis_vector[0]),
+            int(center[1] + major_axis_vector[1])
+        )
+    else:
+        end_point = (
+            int(center[0] + minor_axis_vector[0]),
+            int(center[1] + minor_axis_vector[1])
+        )
+
+    # Ensure the line is pointing towards the center of the image
+    if (end_point[0] - center[0]) * direction_vector[0] < 0 or (end_point[1] - center[1]) * direction_vector[1] < 0:
+        # Flip the endpoint to point toward the image center
+        end_point = (
+            int(center[0] - (end_point[0] - center[0])),
+            int(center[1] - (end_point[1] - center[1]))
+        )
+
+    # Draw the line from the ellipse center to the endpoint
+    cv2.line(image, (int(center[0]), int(center[1])), end_point, (255, 0, 0), 2)
+
+    # Display the result
+    cv2.imshow("Radius towards Image Center", image)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+    # Return the length of the projected radius
+    radius_length = np.linalg.norm(np.array(end_point) - np.array(center))
+    return radius_length
 
 
 def select_ball(img: np.ndarray):
@@ -85,6 +144,7 @@ def select_ball(img: np.ndarray):
     def mouse_callback(event, x, y, flags, param):
         if event == cv2.EVENT_LBUTTONDOWN:
             result.append((x, y))
+            print((x,y))
             cv2.circle(image_draw, (x, y), radius=2, color=(0, 0, 255), thickness=-1)
             cv2.imshow("Image", image_draw)
 
@@ -130,6 +190,7 @@ def calibrate_camera():
             print(f"Ellipse: Center = {el['center']}, "
                   f"Width = {el['width']}, Height = {el['height']}, "
                   f"Angle = {el['angle']}")
+
         # points = select_ball(img)
         # ellipse = get_ellipse_from_pts(img, points)
         # print(f"Ellipse: Center = {ellipse[0]}, "
@@ -201,9 +262,5 @@ def detect_ball_center_and_ellipse(image_path: str):
     cv2.destroyAllWindows()
 
 
-
-
-
 if __name__ == '__main__':
-    # calibrate_camera()
     calibrate_camera()
