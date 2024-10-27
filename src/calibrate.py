@@ -3,11 +3,12 @@ import cv2
 import numpy as np
 from typing import List, Union, Dict, Any, Sequence, Tuple
 
-IMG_DIR = r'C:\Users\Yuval\PycharmProjects\3D_vision_final_project\calibration'
+IMG_DIR = r'C:\Users\Yuval\PycharmProjects\3D_vision_final_project\calibration\ball_calibration'
+
 
 
 # Define the return type with Mat (OpenCV) and ndarray (NumPy)
-def get_images(directory: str) -> List[Union[np.ndarray, cv2.Mat]]:
+def get_images(directory: str) -> List[Tuple[Union[np.ndarray, cv2.Mat], str]]:
     print(directory)
     images = []
     # Loop over the files in the directory
@@ -18,15 +19,52 @@ def get_images(directory: str) -> List[Union[np.ndarray, cv2.Mat]]:
             # Read the image using OpenCV
             img = cv2.imread(file_path)
             if img is not None:
-                images.append(img)
+                images.append((img, filename))
     return images
 
+def correct_and_enhance_image(image: Union[np.ndarray, cv2.Mat]) -> Union[np.ndarray, cv2.Mat]:
+    # Apply CLAHE to enhance contrast
+    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+    l, a, b = cv2.split(lab)
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    l = clahe.apply(l)
+    enhanced_lab = cv2.merge((l, a, b))
+    image = cv2.cvtColor(enhanced_lab, cv2.COLOR_LAB2BGR)
 
-def detect_ellipses(image: Union[np.ndarray, cv2.Mat]) -> list[dict[str, float | Sequence[float] | Any]]:
+    # Remove pinhole darkness effect by applying a mask to correct the vignetting
+    rows, cols = image.shape[:2]
+    X_resultant_kernel = cv2.getGaussianKernel(cols, 200)
+    Y_resultant_kernel = cv2.getGaussianKernel(rows, 200)
+    resultant_kernel = Y_resultant_kernel * X_resultant_kernel.T
+    mask = 255 * resultant_kernel / np.linalg.norm(resultant_kernel)
+    mask = mask.astype(np.uint8)
+    vignette_removed = cv2.addWeighted(image, 0.8, cv2.merge((mask, mask, mask)), 0.2, 0)
+    image = vignette_removed
 
+    # Convert to HSV color space to adjust the intensity and reduce chromatic aberration
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    h, s, v = cv2.split(hsv)
+
+    # Apply histogram equalization to the V channel to correct for pinhole effect and adjust brightness
+    v = cv2.equalizeHist(v)
+
+    # Merge the channels back
+    v = cv2.add(v, 60)  # Increase brightness further
+    corrected_hsv = cv2.merge((h, s, v))
+
+    # Convert back to BGR color space
+    corrected_image = cv2.cvtColor(corrected_hsv, cv2.COLOR_HSV2BGR)
+    return corrected_image
+
+
+def detect_ellipses(image: Union[np.ndarray, cv2.Mat], output_dir: str, filename: str) -> list[
+    dict[str, float | Sequence[float] | Any]]:
+
+    # Neutralize chromatic colors
+    image = correct_and_enhance_image(image)
     # Define the color range for a tennis ball (yellow-green)
-    lower_green = np.array([29, 86, 6])
-    upper_green = np.array([64, 255, 255])
+    lower_green = np.array([25, 30, 30])
+    upper_green = np.array([95, 255, 255])
 
     # Create a mask for detecting the tennis ball's color
     blurred = cv2.GaussianBlur(image, (5, 5), 0)
@@ -34,9 +72,10 @@ def detect_ellipses(image: Union[np.ndarray, cv2.Mat]) -> list[dict[str, float |
     mask_green = cv2.inRange(hsv, lower_green, upper_green)
     mask_green = cv2.erode(mask_green, None, iterations=2)
     mask_green = cv2.dilate(mask_green, None, iterations=4)
-    kernel = np.ones((10,10),np.uint8)
+    kernel = np.ones((10, 10), np.uint8)
     mask_green = cv2.morphologyEx(mask_green, cv2.MORPH_CLOSE, kernel)
-    cv2.imshow("mask_green", mask_green)
+    mask_green = cv2.morphologyEx(mask_green, cv2.MORPH_OPEN, kernel)
+    # cv2.imshow("mask_green", mask_green)
 
     # Find contours in the image
     contours, _ = cv2.findContours(mask_green.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -52,30 +91,36 @@ def detect_ellipses(image: Union[np.ndarray, cv2.Mat]) -> list[dict[str, float |
             ellipse = cv2.fitEllipse(contour)
             (center, (width, height), angle) = ellipse
 
-            # Filter out ellipses based on size and roundness (tennis ball is almost round)
+            # Filter out ellipses based on size, roundness, and area (tennis ball is almost round)
+            min_width, min_height = 50, 50  # Minimum size for detected tennis ball
+            min_area = 1000  # Minimum area threshold to filter out small holes
+            contour_area = cv2.contourArea(contour)
             aspect_ratio = width / height if width > height else height / width
             print(f"aspect ratio: {aspect_ratio}")
-            if 0.7 < aspect_ratio < 1.3:  # Adjust size threshold based on your image
+            if 0.7 < aspect_ratio < 1.4 and width > min_width and height > min_height and contour_area > min_area:
                 ellipses.append({
                     "center": center,
                     "width": width,
                     "height": height,
                     "angle": angle
                 })
-            else:
-                continue
-            # Draw the ellipse on the image for visualization (optional)
-            cv2.ellipse(image, ellipse, (0, 255, 0), 2)
+                # Draw the ellipse on the image for visualization (optional)
+                cv2.ellipse(image, ellipse, (0, 255, 0), 2)
 
-            radius = get_ellipse_direction_radius(angle, center, image, width, height)
-            print(f"Ball radius in direction of camera center: {radius}")
+                radius = get_ellipse_direction_radius(angle, center, image, width, height)
+                print(f"Ball radius in direction of camera center: {radius}")
 
-    # Display the result
-    cv2.imshow("Ellipses Detected", image)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+                # Add a label with the radius size
+                label = f"Radius: {radius:.2f}"
+                cv2.putText(image, label, (int(center[0]), int(center[1] - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
+                            (0, 0, 255), 2)
 
-    return ellipses
+                # Save the image with the ellipse and radius label
+                output_path = os.path.join(output_dir,
+                                           f"ellipse_radius_{radius:.2f}_distance_{filename.split('_')[0]}_offset_{filename.split('_')[1]}.png")
+                cv2.imwrite(output_path, image)
+
+    return ellipses, radius
 
 
 def get_ellipse_direction_radius(angle, center, image, width, height):
@@ -123,14 +168,88 @@ def get_ellipse_direction_radius(angle, center, image, width, height):
     # Draw the line from the ellipse center to the endpoint
     cv2.line(image, (int(center[0]), int(center[1])), end_point, (255, 0, 0), 2)
 
-    # Display the result
-    cv2.imshow("Radius towards Image Center", image)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+    # resized_image = resize_image(image)
+    # # Display the result
+    # cv2.imshow("Radius towards Image Center", resized_image)
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
 
     # Return the length of the projected radius
     radius_length = np.linalg.norm(np.array(end_point) - np.array(center))
     return radius_length
+
+
+def resize_image(image):
+    image_copy = image.copy()
+    # Resize the image by a scaling factor of 0.5 while keeping the aspect ratio consistent.
+    scale_factor = 0.3
+    # Calculate the new dimensions
+    new_width = int(image_copy.shape[1] * scale_factor)
+    new_height = int(image_copy.shape[0] * scale_factor)
+    # Perform the resize operation
+    resized_image = cv2.resize(image_copy, (new_width, new_height), interpolation=cv2.INTER_AREA)
+    return resized_image
+
+
+import pandas as pd
+from scipy.optimize import curve_fit
+import matplotlib.pyplot as plt
+
+
+def calibrate_camera():
+    images = get_images(IMG_DIR)
+    output_dir = os.path.join(IMG_DIR, "processed_images")
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    ratios = {}
+    offsets = set()
+    center_radius = None
+    for img, filename in images:
+        ellipses, radius = detect_ellipses(img, output_dir, filename)
+        for el in ellipses:
+            print(f"Ellipse: Center = {el['center']}, "
+                  f"Width = {el['width']}, Height = {el['height']}, "
+                  f"Angle = {el['angle']}")
+            distance = float(filename.split('_')[0])
+            offset = int(filename.split('_')[1].split('.')[0])
+
+            if offset == 0:
+                center_radius = radius
+            else:
+                radius_ratio = radius / center_radius
+                if offset not in ratios:
+                    ratios[offset] = []
+                ratios[offset].append((distance, radius_ratio))
+                offsets.add(offset)
+
+    # Prepare data for curve fitting
+    if center_radius is not None:
+        for offset in offsets:
+            if len(ratios[offset]) < 3:
+                print(f"Not enough data points for offset {offset} to perform curve fitting. Skipping...")
+                continue
+            distances, ratio_values = zip(*ratios[offset])
+
+            # Define a fitting function (e.g., a quadratic curve)
+            def fitting_func(x, a, b, c):
+                return a * x**2 + b * x + c
+
+            # Perform curve fitting
+            params, _ = curve_fit(fitting_func, distances, ratio_values)
+
+            # Plot the data and the fitting curve
+            plt.scatter(distances, ratio_values, label=f'Data Points (Offset {offset})')
+            fit_x = np.linspace(min(distances), max(distances), 100)
+            fit_y = fitting_func(fit_x, *params)
+            plt.plot(fit_x, fit_y, label=f'Fitting Curve (Offset {offset})')
+            plt.xlabel('Distance from Camera (cm)')
+            plt.ylabel('Radius Ratio')
+            plt.title(f'Curve Fit of Radius Ratio vs. Distance (Offset {offset})')
+            plt.legend()
+            plt.savefig(os.path.join(output_dir, f'curve_fit_offset_{offset}.png'))
+            plt.show()
+            print(f'Fitting parameters for offset {offset}: a={params[0]}, b={params[1]}, c={params[2]}')
 
 
 def select_ball(img: np.ndarray):
@@ -182,23 +301,6 @@ def get_ellipse_from_pts(img, points):
     cv2.destroyAllWindows()
 
     return ellipse
-
-
-def calibrate_camera():
-    images = get_images(IMG_DIR)
-
-    for img in images:
-        ellipses = detect_ellipses(img)
-        for el in ellipses:
-            print(f"Ellipse: Center = {el['center']}, "
-                  f"Width = {el['width']}, Height = {el['height']}, "
-                  f"Angle = {el['angle']}")
-
-        # points = select_ball(img)
-        # ellipse = get_ellipse_from_pts(img, points)
-        # print(f"Ellipse: Center = {ellipse[0]}, "
-        #       f"Width = {ellipse[1][0]}, Height = {ellipse[1][1]}, "
-        #       f"Angle = {ellipse[2]}")
 
 
 def detect_ball_center_and_ellipse(image_path: str):
