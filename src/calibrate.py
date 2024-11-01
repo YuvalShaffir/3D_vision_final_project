@@ -2,9 +2,9 @@ import os
 import cv2
 import numpy as np
 from typing import List, Union, Dict, Any, Sequence, Tuple
+import chessboard as chess
 
-IMG_DIR = r'C:\Users\Yuval\PycharmProjects\3D_vision_final_project\calibration\ball_calibration'
-
+IMG_DIR = r'C:\Users\Yuval\PycharmProjects\3D_vision_final_project\calibration\new_ball_calibration'
 
 
 # Define the return type with Mat (OpenCV) and ndarray (NumPy)
@@ -22,24 +22,25 @@ def get_images(directory: str) -> List[Tuple[Union[np.ndarray, cv2.Mat], str]]:
                 images.append((img, filename))
     return images
 
-def correct_and_enhance_image(image: Union[np.ndarray, cv2.Mat]) -> Union[np.ndarray, cv2.Mat]:
-    # Apply CLAHE to enhance contrast
-    lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
-    l, a, b = cv2.split(lab)
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-    l = clahe.apply(l)
-    enhanced_lab = cv2.merge((l, a, b))
-    image = cv2.cvtColor(enhanced_lab, cv2.COLOR_LAB2BGR)
 
-    # Remove pinhole darkness effect by applying a mask to correct the vignetting
-    rows, cols = image.shape[:2]
-    X_resultant_kernel = cv2.getGaussianKernel(cols, 200)
-    Y_resultant_kernel = cv2.getGaussianKernel(rows, 200)
-    resultant_kernel = Y_resultant_kernel * X_resultant_kernel.T
-    mask = 255 * resultant_kernel / np.linalg.norm(resultant_kernel)
-    mask = mask.astype(np.uint8)
-    vignette_removed = cv2.addWeighted(image, 0.8, cv2.merge((mask, mask, mask)), 0.2, 0)
-    image = vignette_removed
+def correct_and_enhance_image(image: Union[np.ndarray, cv2.Mat]) -> Union[np.ndarray, cv2.Mat]:
+    # # Apply CLAHE to enhance contrast
+    # lab = cv2.cvtColor(image, cv2.COLOR_BGR2LAB)
+    # l, a, b = cv2.split(lab)
+    # clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    # l = clahe.apply(l)
+    # enhanced_lab = cv2.merge((l, a, b))
+    # image = cv2.cvtColor(enhanced_lab, cv2.COLOR_LAB2BGR)
+
+    # # Remove pinhole darkness effect by applying a mask to correct the vignetting
+    # rows, cols = image.shape[:2]
+    # X_resultant_kernel = cv2.getGaussianKernel(cols, 200)
+    # Y_resultant_kernel = cv2.getGaussianKernel(rows, 200)
+    # resultant_kernel = Y_resultant_kernel * X_resultant_kernel.T
+    # mask = 255 * resultant_kernel / np.linalg.norm(resultant_kernel)
+    # mask = mask.astype(np.uint8)
+    # vignette_removed = cv2.addWeighted(image, 0.8, cv2.merge((mask, mask, mask)), 0.2, 0)
+    # image = vignette_removed
 
     # Convert to HSV color space to adjust the intensity and reduce chromatic aberration
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
@@ -49,7 +50,7 @@ def correct_and_enhance_image(image: Union[np.ndarray, cv2.Mat]) -> Union[np.nda
     v = cv2.equalizeHist(v)
 
     # Merge the channels back
-    v = cv2.add(v, 60)  # Increase brightness further
+    v = cv2.add(v, 20)  # Increase brightness further
     corrected_hsv = cv2.merge((h, s, v))
 
     # Convert back to BGR color space
@@ -75,7 +76,7 @@ def detect_ellipses(image: Union[np.ndarray, cv2.Mat], output_dir: str, filename
     kernel = np.ones((10, 10), np.uint8)
     mask_green = cv2.morphologyEx(mask_green, cv2.MORPH_CLOSE, kernel)
     mask_green = cv2.morphologyEx(mask_green, cv2.MORPH_OPEN, kernel)
-    # cv2.imshow("mask_green", mask_green)
+    cv2.imshow("mask_green", mask_green)
 
     # Find contours in the image
     contours, _ = cv2.findContours(mask_green.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -195,6 +196,28 @@ import pandas as pd
 from scipy.optimize import curve_fit
 import matplotlib.pyplot as plt
 
+# Create a directory to save the undistorted images
+calibrated_dir = os.path.join(IMG_DIR, 'calibrated_images')
+os.makedirs(calibrated_dir, exist_ok=True)
+
+
+def undistort_image(img, filename, camera_matrix, dist_coeffs):
+    h, w = img.shape[:2]
+    new_camera_matrix, roi = cv2.getOptimalNewCameraMatrix(
+        camera_matrix, dist_coeffs, (w, h), 1, (w, h)
+    )
+    undistorted_img = cv2.undistort(img, camera_matrix, dist_coeffs, None, new_camera_matrix)
+
+    # Crop the image based on the region of interest
+    x, y, w, h = roi
+    undistorted_img = undistorted_img[y:y + h, x:x + w]
+
+    # Save the undistorted image
+    base_name = os.path.basename(filename)
+    save_path = os.path.join(calibrated_dir, base_name)
+    cv2.imwrite(save_path, undistorted_img)
+    return undistorted_img
+
 
 def calibrate_camera():
     images = get_images(IMG_DIR)
@@ -202,11 +225,21 @@ def calibrate_camera():
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
+    # ret, camera_matrix, dist_coeffs, rvecs, tvecs = chess.calibrate_camera_sb()
+    # print(f'ret: {ret}\n camera_matrix: {camera_matrix}\n dist_coeffs: {dist_coeffs}\n rvecs: {rvecs}\n tvecs: {rvecs}\n')
+    ret = 0.22856806191867238
+    camera_matrix = np.array([[1.44817287e+03, 0.00000000e+00, 7.68240539e+02],
+                    [0.00000000e+00, 1.44785922e+03, 1.02781409e+03],
+                    [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]])
+    dist_coeffs = np.array([[2.08930540e-01, - 6.91491224e-01,  8.39198321e-05,  1.27624134e-04,
+                   7.00939497e-01]])
+
     ratios = {}
     offsets = set()
     center_radius = None
     for img, filename in images:
-        ellipses, radius = detect_ellipses(img, output_dir, filename)
+        undistorted_img = undistort_image(img, filename, camera_matrix, dist_coeffs)
+        ellipses, radius = detect_ellipses(undistorted_img, output_dir, filename)
         for el in ellipses:
             print(f"Ellipse: Center = {el['center']}, "
                   f"Width = {el['width']}, Height = {el['height']}, "
@@ -252,119 +285,119 @@ def calibrate_camera():
             print(f'Fitting parameters for offset {offset}: a={params[0]}, b={params[1]}, c={params[2]}')
 
 
-def select_ball(img: np.ndarray):
-    """
-    Let the user select the ball on the image.
-    The user will select the left, right, top and bottom points.
-    :param img: Input image
-    :return: List of all selected points
-    """
-    result = []
-    # Create a copy of the image for drawing
-    image_draw = img.copy()
-
-    def mouse_callback(event, x, y, flags, param):
-        if event == cv2.EVENT_LBUTTONDOWN:
-            result.append((x, y))
-            print((x,y))
-            cv2.circle(image_draw, (x, y), radius=2, color=(0, 0, 255), thickness=-1)
-            cv2.imshow("Image", image_draw)
-
-    # Set up window and mouse callback
-    cv2.namedWindow("Image", cv2.WINDOW_NORMAL)
-    cv2.setMouseCallback("Image", mouse_callback)
-    cv2.imshow("Image", img)
-
-    # Wait until the user presses 'q' or until the right number of points is selected
-    while True:
-        if len(result) == 5:
-            break
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
-    cv2.destroyAllWindows()
-    return np.array(result, dtype=np.int32)
-
-
-def get_ellipse_from_pts(img, points):
-    print("Points selected:", points)
-
-    # Ensure there are enough points to fit an ellipse (at least 5)
-    if len(points) < 5:
-        raise ValueError("At least 5 points are required to fit an ellipse.")
-
-    ellipse = cv2.fitEllipse(points)
-    image_draw = img.copy()
-    cv2.ellipse(image_draw, ellipse, (0, 255, 0), 1)
-    cv2.imshow("Fitted Ellipse", image_draw)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
-
-    return ellipse
+# def select_ball(img: np.ndarray):
+#     """
+#     Let the user select the ball on the image.
+#     The user will select the left, right, top and bottom points.
+#     :param img: Input image
+#     :return: List of all selected points
+#     """
+#     result = []
+#     # Create a copy of the image for drawing
+#     image_draw = img.copy()
+#
+#     def mouse_callback(event, x, y, flags, param):
+#         if event == cv2.EVENT_LBUTTONDOWN:
+#             result.append((x, y))
+#             print((x,y))
+#             cv2.circle(image_draw, (x, y), radius=2, color=(0, 0, 255), thickness=-1)
+#             cv2.imshow("Image", image_draw)
+#
+#     # Set up window and mouse callback
+#     cv2.namedWindow("Image", cv2.WINDOW_NORMAL)
+#     cv2.setMouseCallback("Image", mouse_callback)
+#     cv2.imshow("Image", img)
+#
+#     # Wait until the user presses 'q' or until the right number of points is selected
+#     while True:
+#         if len(result) == 5:
+#             break
+#         if cv2.waitKey(1) & 0xFF == ord('q'):
+#             break
+#
+#     cv2.destroyAllWindows()
+#     return np.array(result, dtype=np.int32)
 
 
-def detect_ball_center_and_ellipse(image_path: str):
-    # Load the image
-    image = cv2.imread(image_path)
-    if image is None:
-        raise ValueError(f"Could not load image at {image_path}")
-    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+# def get_ellipse_from_pts(img, points):
+#     print("Points selected:", points)
+#
+#     # Ensure there are enough points to fit an ellipse (at least 5)
+#     if len(points) < 5:
+#         raise ValueError("At least 5 points are required to fit an ellipse.")
+#
+#     ellipse = cv2.fitEllipse(points)
+#     image_draw = img.copy()
+#     cv2.ellipse(image_draw, ellipse, (0, 255, 0), 1)
+#     cv2.imshow("Fitted Ellipse", image_draw)
+#     cv2.waitKey(0)
+#     cv2.destroyAllWindows()
+#
+#     return ellipse
 
-    # Define the color range for a tennis ball (yellow-green)
-    lower_green = np.array([30, 100, 100])
-    upper_green = np.array([20, 100, 100])
-    mask = cv2.inRange(hsv, lower_green, upper_green)
-    # Apply GaussianBlur to reduce noise
-    blurred_image = cv2.GaussianBlur(hsv, (15, 15), 0)
 
-    # Convert the image to grayscale (for contour detection)
-    gray = cv2.cvtColor(blurred_image, cv2.COLOR_BGR2GRAY)
-
-    # Threshold the image to create a binary image (you can adjust the threshold value)
-    _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV)
-    cv2.imshow("blurred_image", thresh)
-
-    # Find contours in the binary image
-    contours, _ = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-
-    # Loop over the contours to find potential ball regions
-    for contour in contours:
-        if len(contour) >= 5:  # Ellipse fitting requires at least 5 points
-            # Calculate the center of the contour
-            M = cv2.moments(contour)
-            if M["m00"] != 0:
-                cX = int(M["m10"] / M["m00"])
-                cY = int(M["m01"] / M["m00"])
-
-                # Create a frame (bounding box) around the contour center
-                box_size = 100  # Adjust this size based on the image resolution
-                top_left = (max(0, cX - box_size), max(0, cY - box_size))
-                bottom_right = (min(image.shape[1], cX + box_size), min(image.shape[0], cY + box_size))
-
-                # Crop the region of interest (ROI)
-                roi = image[top_left[1]:bottom_right[1], top_left[0]:bottom_right[0]]
-                # Detect edges in the ROI (optional step to help with contour detection)
-                edges = cv2.Canny(roi, 50, 150)
-
-                # Find contours in the ROI
-                roi_contours, _ = cv2.findContours(edges, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-
-                # Try to fit an ellipse to the largest contour in the ROI
-                if len(roi_contours) > 0:
-                    largest_contour = max(roi_contours, key=cv2.contourArea)
-                    if len(largest_contour) >= 5:
-                        ellipse = cv2.fitEllipse(largest_contour)
-                        cv2.ellipse(roi, ellipse, (0, 255, 0), 2)
-
-                # Draw the frame around the detected ball on the original image
-                cv2.rectangle(image, top_left, bottom_right, (255, 0, 0), 2)
-                # Draw the center point of the detected ball
-                cv2.circle(image, (cX, cY), 5, (0, 0, 255), -1)
-
-    # Show the final result
-    cv2.imshow("Detected Ball and Ellipse", image)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+# def detect_ball_center_and_ellipse(image_path: str):
+#     # Load the image
+#     image = cv2.imread(image_path)
+#     if image is None:
+#         raise ValueError(f"Could not load image at {image_path}")
+#     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+#
+#     # Define the color range for a tennis ball (yellow-green)
+#     lower_green = np.array([30, 100, 100])
+#     upper_green = np.array([20, 100, 100])
+#     mask = cv2.inRange(hsv, lower_green, upper_green)
+#     # Apply GaussianBlur to reduce noise
+#     blurred_image = cv2.GaussianBlur(hsv, (15, 15), 0)
+#
+#     # Convert the image to grayscale (for contour detection)
+#     gray = cv2.cvtColor(blurred_image, cv2.COLOR_BGR2GRAY)
+#
+#     # Threshold the image to create a binary image (you can adjust the threshold value)
+#     _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY_INV)
+#     cv2.imshow("blurred_image", thresh)
+#
+#     # Find contours in the binary image
+#     contours, _ = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+#
+#     # Loop over the contours to find potential ball regions
+#     for contour in contours:
+#         if len(contour) >= 5:  # Ellipse fitting requires at least 5 points
+#             # Calculate the center of the contour
+#             M = cv2.moments(contour)
+#             if M["m00"] != 0:
+#                 cX = int(M["m10"] / M["m00"])
+#                 cY = int(M["m01"] / M["m00"])
+#
+#                 # Create a frame (bounding box) around the contour center
+#                 box_size = 100  # Adjust this size based on the image resolution
+#                 top_left = (max(0, cX - box_size), max(0, cY - box_size))
+#                 bottom_right = (min(image.shape[1], cX + box_size), min(image.shape[0], cY + box_size))
+#
+#                 # Crop the region of interest (ROI)
+#                 roi = image[top_left[1]:bottom_right[1], top_left[0]:bottom_right[0]]
+#                 # Detect edges in the ROI (optional step to help with contour detection)
+#                 edges = cv2.Canny(roi, 50, 150)
+#
+#                 # Find contours in the ROI
+#                 roi_contours, _ = cv2.findContours(edges, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+#
+#                 # Try to fit an ellipse to the largest contour in the ROI
+#                 if len(roi_contours) > 0:
+#                     largest_contour = max(roi_contours, key=cv2.contourArea)
+#                     if len(largest_contour) >= 5:
+#                         ellipse = cv2.fitEllipse(largest_contour)
+#                         cv2.ellipse(roi, ellipse, (0, 255, 0), 2)
+#
+#                 # Draw the frame around the detected ball on the original image
+#                 cv2.rectangle(image, top_left, bottom_right, (255, 0, 0), 2)
+#                 # Draw the center point of the detected ball
+#                 cv2.circle(image, (cX, cY), 5, (0, 0, 255), -1)
+#
+#     # Show the final result
+#     cv2.imshow("Detected Ball and Ellipse", image)
+#     cv2.waitKey(0)
+#     cv2.destroyAllWindows()
 
 
 if __name__ == '__main__':
