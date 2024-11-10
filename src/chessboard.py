@@ -3,7 +3,7 @@ import cv2 as cv
 import glob
 import os
 
-IMAGE_DIR = r'C:\Users\Yuval\PycharmProjects\3D_vision_final_project\calibration\rounded_chessboard'
+IMAGE_DIR = r'C:\Users\Yuval\PycharmProjects\3D_vision_final_project\calibration\Chessboard'
 
 
 def calibrate_camera_sb(image_dir=IMAGE_DIR, pattern_size=(14, 9), square_size=12.1):
@@ -32,7 +32,7 @@ def calibrate_camera_sb(image_dir=IMAGE_DIR, pattern_size=(14, 9), square_size=1
     imgpoints = []  # 2D points in image plane
 
     # Retrieve all images from the specified directory
-    images = glob.glob(f'{image_dir}/*.jpeg')
+    images = glob.glob(f'{image_dir}/*.jpg')
 
     for fname in images:
         print(f"filename: {fname}")
@@ -47,9 +47,9 @@ def calibrate_camera_sb(image_dir=IMAGE_DIR, pattern_size=(14, 9), square_size=1
             imgpoints.append(corners)
 
             # Optionally, draw and display the corners
-            cv.drawChessboardCorners(img, pattern_size, corners, ret)
-            cv.imshow('Chessboard Corners', img)
-            cv.waitKey(500)
+            # cv.drawChessboardCorners(img, pattern_size, corners, ret)
+            # cv.imshow('Chessboard Corners', img)
+            # cv.waitKey(500)
 
     cv.destroyAllWindows()
 

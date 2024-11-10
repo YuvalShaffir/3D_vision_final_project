@@ -8,6 +8,7 @@ import LinearModel
 IMG_DIR = r'C:\Users\Yuval\PycharmProjects\3D_vision_final_project\calibration\new_ball_calibration'
 TEST_DIR = r'C:\Users\Yuval\PycharmProjects\3D_vision_final_project\test_images'
 
+
 # Define the return type with Mat (OpenCV) and ndarray (NumPy)
 def get_images(directory: str) -> List[Tuple[Union[np.ndarray, cv2.Mat], str]]:
     print(directory)
@@ -51,7 +52,7 @@ def correct_and_enhance_image(image: Union[np.ndarray, cv2.Mat]) -> Union[np.nda
     v = cv2.equalizeHist(v)
 
     # Merge the channels back
-    v = cv2.add(v, 20)  # Increase brightness further
+    v = cv2.add(v, 10)  # Increase brightness further
     corrected_hsv = cv2.merge((h, s, v))
 
     # Convert back to BGR color space
@@ -59,7 +60,7 @@ def correct_and_enhance_image(image: Union[np.ndarray, cv2.Mat]) -> Union[np.nda
     return corrected_image
 
 
-def detect_ellipses(image: Union[np.ndarray, cv2.Mat], output_dir: str, filename: str) -> list[
+def detect_ellipses(image: Union[np.ndarray, cv2.Mat], output_dir: str, filename: str, new_camera_matrix) -> list[
     dict[str, float | Sequence[float] | Any]]:
 
     # Neutralize chromatic colors
@@ -86,7 +87,7 @@ def detect_ellipses(image: Union[np.ndarray, cv2.Mat], output_dir: str, filename
     contours, _ = cv2.findContours(mask_green.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     ellipses = []
-
+    radius = None
     # Loop over the contours
     for contour in contours:
         # Only fit ellipses to contours that have more than 5 points
@@ -98,11 +99,13 @@ def detect_ellipses(image: Union[np.ndarray, cv2.Mat], output_dir: str, filename
 
             # Filter out ellipses based on size, roundness, and area (tennis ball is almost round)
             min_width, min_height = 10, 10  # Minimum size for detected tennis ball
-            min_area = 200  # Minimum area threshold to filter out small holes
+            min_area = 2000  # Minimum area threshold to filter out small holes
             contour_area = cv2.contourArea(contour)
             aspect_ratio = width / height if width > height else height / width
-            print(f"aspect ratio: {aspect_ratio}\n area: {contour_area}")
-            if 0.7 < aspect_ratio < 1.4 and width > min_width and height > min_height and contour_area > min_area:
+            if 0.7 < aspect_ratio < 1.2 and width > min_width and height > min_height and contour_area > min_area:
+
+                print(f"aspect ratio: {aspect_ratio}\n area: {contour_area}")
+
                 ellipses.append({
                     "center": center,
                     "width": width,
@@ -112,29 +115,31 @@ def detect_ellipses(image: Union[np.ndarray, cv2.Mat], output_dir: str, filename
                 # Draw the ellipse on the image for visualization (optional)
                 cv2.ellipse(image, ellipse, (0, 255, 0), 2)
 
-                radius = get_ellipse_direction_radius(angle, center, image, width, height)
+                radius = get_ellipse_direction_radius(angle, center, image, width, height, new_camera_matrix)
                 print(f"Ball radius in direction of camera center: {radius}")
 
                 # Add a label with the radius size
                 label = f"Radius: {radius:.2f}"
                 cv2.putText(image, label, (int(center[0]), int(center[1] - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
                             (0, 0, 255), 2)
-
+                base_name = os.path.splitext(os.path.basename(filename))[0]
                 # Save the image with the ellipse and radius label
-                if filename.split('_') == 2:
+                if base_name.split('_') == 2:
                     output_path = os.path.join(output_dir,
-                                               f"ellipse_radius_{radius:.2f}_distance_{filename.split('_')[0]}_offset_{filename.split('_')[1]}.png")
+                                               f"ellipse_radius_{radius:.2f}_distance_{base_name.split('_')[0]}_offset_{base_name.split('_')[1]}.png")
                 else:
-                    output_path = os.path.join(output_dir,
-                                               f"{filename}.png")
+                    output_path = os.path.join(output_dir, f"{base_name}.png")
                 cv2.imwrite(output_path, image)
+
+    if not radius:
+        return ellipses, None
 
     return ellipses, radius
 
 
-def get_ellipse_direction_radius(angle, center, image, width, height):
+def get_ellipse_direction_radius(angle, center, image, width, height, new_camera_matrix):
     # Calculate the direction vector from image center to ellipse center
-    image_center = (image.shape[1] // 2, image.shape[0] // 2)
+    image_center = get_image_center(new_camera_matrix)
     direction_vector = (image_center[0] - center[0], image_center[1] - center[1])
 
     # Convert angle to radians for trigonometric functions
@@ -148,6 +153,8 @@ def get_ellipse_direction_radius(angle, center, image, width, height):
 
     # Normalize the direction vector
     direction_magnitude = np.linalg.norm(direction_vector)
+    if direction_magnitude == 0:
+        return 0  # If the direction vector has zero magnitude, return zero distance
     normalized_direction_vector = (direction_vector[0] / direction_magnitude, direction_vector[1] / direction_magnitude)
 
     # Project the normalized direction vector onto the major and minor axes
@@ -157,31 +164,28 @@ def get_ellipse_direction_radius(angle, center, image, width, height):
     # Calculate the final endpoint along the major or minor axis based on the larger projection
     if abs(projection_major) > abs(projection_minor):
         end_point = (
-            int(center[0] + major_axis_vector[0]),
-            int(center[1] + major_axis_vector[1])
+            center[0] + np.sign(projection_major) * major_axis_vector[0],
+            center[1] + np.sign(projection_major) * major_axis_vector[1]
         )
     else:
         end_point = (
-            int(center[0] + minor_axis_vector[0]),
-            int(center[1] + minor_axis_vector[1])
+            center[0] + np.sign(projection_minor) * minor_axis_vector[0],
+            center[1] + np.sign(projection_minor) * minor_axis_vector[1]
         )
 
     # Ensure the line is pointing towards the center of the image
-    if (end_point[0] - center[0]) * direction_vector[0] < 0 or (end_point[1] - center[1]) * direction_vector[1] < 0:
+    end_vector = (end_point[0] - center[0], end_point[1] - center[1])
+    dot_product = end_vector[0] * direction_vector[0] + end_vector[1] * direction_vector[1]
+
+    if dot_product < 0:
         # Flip the endpoint to point toward the image center
         end_point = (
-            int(center[0] - (end_point[0] - center[0])),
-            int(center[1] - (end_point[1] - center[1]))
+            center[0] - end_vector[0],
+            center[1] - end_vector[1]
         )
 
     # Draw the line from the ellipse center to the endpoint
-    cv2.line(image, (int(center[0]), int(center[1])), end_point, (255, 0, 0), 2)
-
-    # resized_image = resize_image(image)
-    # # Display the result
-    # cv2.imshow("Radius towards Image Center", resized_image)
-    # cv2.waitKey(0)
-    # cv2.destroyAllWindows()
+    cv2.line(image, (int(center[0]), int(center[1])), (int(end_point[0]), int(end_point[1])), (255, 0, 0), 2)
 
     # Return the length of the projected radius
     radius_length = np.linalg.norm(np.array(end_point) - np.array(center))
@@ -222,10 +226,11 @@ def undistort_image(img, filename, camera_matrix, dist_coeffs):
     undistorted_img = undistorted_img[y:y + h, x:x + w]
 
     # Save the undistorted image
-    base_name = os.path.basename(filename)
-    save_path = os.path.join(calibrated_dir, base_name)
+
+    base_name = os.path.splitext(os.path.basename(filename))[0]
+    save_path = os.path.join(calibrated_dir, base_name + '.png')
     cv2.imwrite(save_path, undistorted_img)
-    return undistorted_img
+    return undistorted_img, new_camera_matrix
 
 
 def calculate_distance(ball_center, image_center):
@@ -238,15 +243,12 @@ def calculate_distance(ball_center, image_center):
     return distance
 
 
-def get_image_center(image):
-    # Get the dimensions of the image
-    height, width = image.shape[:2]  # shape[:2] gives (height, width)
+def get_image_center(new_camera_matrix):
+    # The principal point (cx', cy') in the new camera matrix represents the new image center
+    cx = new_camera_matrix[0, 2]
+    cy = new_camera_matrix[1, 2]
 
-    # Calculate the center
-    center_x = width // 2
-    center_y = height // 2
-
-    return (center_x, center_y)
+    return (int(cx), int(cy))
 
 
 def calibrate_camera():
@@ -257,27 +259,30 @@ def calibrate_camera():
 
     # ret, camera_matrix, dist_coeffs, rvecs, tvecs = chess.calibrate_camera_sb()
     # print(f'ret: {ret}\n camera_matrix: {camera_matrix}\n dist_coeffs: {dist_coeffs}\n rvecs: {rvecs}\n tvecs: {rvecs}\n')
-    ret = 0.22856806191867238
-    camera_matrix = np.array([[1.44817287e+03, 0.00000000e+00, 7.68240539e+02],
-                    [0.00000000e+00, 1.44785922e+03, 1.02781409e+03],
-                    [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]])
-    dist_coeffs = np.array([[2.08930540e-01, - 6.91491224e-01,  8.39198321e-05,  1.27624134e-04,
-                   7.00939497e-01]])
+
+    camera_matrix = np.array([[2.89806869e+03, 0.00000000e+00, 1.53624044e+03],
+                              [0.00000000e+00, 2.89816682e+03, 2.05761760e+03],
+                              [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]])
+
+    dist_coeffs = np.array([[2.05489723e-01, -6.73059010e-01, 3.36320714e-04, 1.49915927e-04, 6.66189722e-01]])
 
     ratios = {}
     offsets = set()
     center_radius = None
     for img, filename in images:
-        undistorted_img = undistort_image(img, filename, camera_matrix, dist_coeffs)
-        ellipses, radius = detect_ellipses(undistorted_img, output_dir, filename)
+        undistorted_img, new_camera_matrix = undistort_image(img, filename, camera_matrix, dist_coeffs)
+        ellipses, radius = detect_ellipses(undistorted_img, output_dir, filename, new_camera_matrix)
+        if not radius:
+            continue
+
         for el in ellipses:
             print(f"Ellipse: Center = {el['center']}, "
                   f"Width = {el['width']}, Height = {el['height']}, "
                   f"Angle = {el['angle']}")
-            camera_height = float(filename.split('_')[0])
-            offset = int(filename.split('_')[1].split('.')[0])
-            distance_from_center = calculate_distance(el['center'], get_image_center(img))
-            distance_from_camera = np.sqrt(camera_height**2 + offset**2)  # pythagoras
+            # camera_height = float(filename.split('_')[0])
+            base_name = os.path.splitext(os.path.basename(filename))[0]
+            offset = int(base_name.split('_')[1])
+            distance_from_center = calculate_distance(el['center'], get_image_center(new_camera_matrix))
 
             if offset == 0:
                 center_radius = radius
@@ -286,38 +291,71 @@ def calibrate_camera():
                 if offset not in ratios:
                     ratios[offset] = []
                 # ratios[offset].append((distance, radius_ratio))
-                ratios[offset].append([distance_from_center, radius, center_radius])
+                ratios[offset].append([distance_from_center, radius, center_radius, el['width'], el['height'], el['angle']])
                 offsets.add(offset)
 
-    model = LinearModel.create_prediction_model(ratios)
-    return model
     # # Prepare data for curve fitting
     # if center_radius is not None:
     #     for offset in offsets:
-    #         if len(ratios[offset]) < 3:
-    #             print(f"Not enough data points for offset {offset} to perform curve fitting. Skipping...")
-    #             continue
-    #         distances, ratio_values = zip(*ratios[offset])
+    #         # if len(ratios[offset]) < 3:
+    #         #     print(f"Not enough data points for offset {offset} to perform curve fitting. Skipping...")
+    #         #     continue
+    #         distances, radius, center_radius = zip(*ratios[offset])
+    #         distances = np.array(distances)  # Convert to NumPy array
+    #         radius = np.array(radius)  # Convert to NumPy array
+    #         center_radius = np.array(center_radius)  # Convert to NumPy array
     #
+    #         # Element-wise division to get the ratio values
+    #         ratio_values = radius / center_radius
     #         # Define a fitting function (e.g., a quadratic curve)
     #         def fitting_func(x, a, b, c):
-    #             return a * x**2 + b * x + c
+    #             return a * x ** 2 + b * x + c
     #
     #         # Perform curve fitting
-    #         params, _ = curve_fit(fitting_func, distances, ratio_values)
+    #         # params, _ = curve_fit(fitting_func, distances, ratio_values)
     #
     #         # Plot the data and the fitting curve
     #         plt.scatter(distances, ratio_values, label=f'Data Points (Offset {offset})')
-    #         fit_x = np.linspace(min(distances), max(distances), 100)
-    #         fit_y = fitting_func(fit_x, *params)
-    #         plt.plot(fit_x, fit_y, label=f'Fitting Curve (Offset {offset})')
+    #         # fit_x = np.linspace(min(distances), max(distances), 100)
+    #         # fit_y = fitting_func(fit_x, *params)
+    #         # plt.plot(fit_x, fit_y, label=f'Fitting Curve (Offset {offset})')
     #         plt.xlabel('Distance from Camera (cm)')
     #         plt.ylabel('Radius Ratio')
     #         plt.title(f'Curve Fit of Radius Ratio vs. Distance (Offset {offset})')
     #         plt.legend()
     #         plt.savefig(os.path.join(output_dir, f'curve_fit_offset_{offset}.png'))
     #         plt.show()
-    #         print(f'Fitting parameters for offset {offset}: a={params[0]}, b={params[1]}, c={params[2]}')
+    #         # print(f'Fitting parameters for offset {offset}: a={params[0]}, b={params[1]}, c={params[2]}')
+
+    # Prepare data for curve fitting
+    if center_radius is not None:
+        plt.figure(figsize=(10, 6))  # Create a single figure for all data points
+        for offset in offsets:
+            # if len(ratios[offset]) < 3:
+            #     print(f"Not enough data points for offset {offset} to perform curve fitting. Skipping...")
+            #     continue
+            distances, radius, center_radius, width, height, angle = zip(*ratios[offset])
+            distances = np.array(distances)  # Convert to NumPy array
+            radius = np.array(radius)  # Convert to NumPy array
+            center_radius = np.array(center_radius)  # Convert to NumPy array
+
+            # Element-wise division to get the ratio values
+            ratio_values = radius / center_radius
+
+            # Plot the data points for each offset on the same figure
+            plt.scatter(distances, ratio_values, label=f'Data Points (Offset {offset})')
+
+        # Set plot labels and title
+        plt.xlabel('Distance from Camera (cm)')
+        plt.ylabel('Radius Ratio')
+        plt.title('Curve Fit of Radius Ratio vs. Distance for All Offsets')
+        plt.legend()
+        plt.savefig(os.path.join(output_dir, 'curve_fit_all_offsets.png'))
+        plt.show()
+
+    model = LinearModel.create_prediction_model(ratios)
+    return model
+
 
 def predict_ball_distance(directory, model):
     images = get_images(directory)
@@ -327,31 +365,37 @@ def predict_ball_distance(directory, model):
 
     # ret, camera_matrix, dist_coeffs, rvecs, tvecs = chess.calibrate_camera_sb()
     # print(f'ret: {ret}\n camera_matrix: {camera_matrix}\n dist_coeffs: {dist_coeffs}\n rvecs: {rvecs}\n tvecs: {rvecs}\n')
-    ret = 0.22856806191867238
-    camera_matrix = np.array([[1.44817287e+03, 0.00000000e+00, 7.68240539e+02],
-                    [0.00000000e+00, 1.44785922e+03, 1.02781409e+03],
-                    [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]])
-    dist_coeffs = np.array([[2.08930540e-01, - 6.91491224e-01,  8.39198321e-05,  1.27624134e-04,
-                   7.00939497e-01]])
+    camera_matrix = np.array([[2.89806869e+03, 0.00000000e+00, 1.53624044e+03],
+                             [0.00000000e+00, 2.89816682e+03, 2.05761760e+03],
+                             [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]])
+
+    dist_coeffs = np.array([[2.05489723e-01, -6.73059010e-01, 3.36320714e-04, 1.49915927e-04, 6.66189722e-01]])
 
 
     for img, filename in images:
-        undistorted_img = undistort_image(img, filename, camera_matrix, dist_coeffs)
-        ellipses, radius = detect_ellipses(undistorted_img, output_dir, filename)
+        undistorted_img, new_camera_matrix = undistort_image(img, filename, camera_matrix, dist_coeffs)
+        ellipses, radius = detect_ellipses(undistorted_img, output_dir, filename, new_camera_matrix)
+        if not radius:
+            continue
+
         for el in ellipses:
             print(f"Ellipse: Center = {el['center']}, "
                   f"Width = {el['width']}, Height = {el['height']}, "
                   f"Angle = {el['angle']}")
-            distance_from_center = calculate_distance(el['center'], get_image_center(img))
+            distance_from_center = calculate_distance(el['center'], get_image_center(new_camera_matrix))
+            aspect_ratio = el['width'] / el['height']
+            ellipse_area = np.pi * (el['width'] / 2) * (el['height'] / 2)
 
-            predicted_center_radius = LinearModel.predict_center_radius(model, distance_from_center, radius)
-            print(predicted_center_radius)
-            camera_matrix = np.array([[1.44817287e+03, 0.00000000e+00, 7.68240539e+02],
-                                      [0.00000000e+00, 1.44785922e+03, 1.02781409e+03],
-                                      [0.00000000e+00, 0.00000000e+00, 1.00000000e+00]])
-            # Extract the focal length from the camera matrix (typically fx or fy)
-            focal_length = camera_matrix[0, 0]
+            predicted_center_radius = LinearModel.predict_center_radius(model, distance_from_center, radius,
+                                                                        aspect_ratio, ellipse_area, el['angle'])
+            print(f"predicted center radius: {predicted_center_radius}")
 
+            # Extract the focal length from the camera matrix (typically fx or fy) in pixels
+            fx = new_camera_matrix[0, 0]
+            fy = new_camera_matrix[1, 1]
+            focal_length = (fx + fy) // 2
+            # samsung A22 camera has 4.7 mm focal length
+            # focal_length = 4.7
             # Known real-world size of the object (e.g., the diameter of the ball in cm)
             real_world_size = 6.4
 
@@ -360,7 +404,7 @@ def predict_ball_distance(directory, model):
 
             distance_to_camera = calculate_distance_to_camera(focal_length, real_world_size, object_size_in_image)
             print(f"Distance to the object from the camera: {distance_to_camera:.2f} cm")
-            print(f"Real distance is: {os.path.basename(filename)}")
+            print(f"Real distance is: {os.path.splitext(os.path.basename(filename))[0]}")
 
 
 def calculate_distance_to_camera(focal_length, real_world_size, object_size_in_image):

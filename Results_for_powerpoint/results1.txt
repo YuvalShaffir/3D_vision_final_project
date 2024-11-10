@@ -1,0 +1,26 @@
+aspect ratio: 1.0547831330924
+ area: 19320.0
+Ball radius in direction of camera center: 92.76949310302722
+Ellipse: Center = (1508.703125, 2054.5849609375), Width = 175.90249633789062, Height = 185.5389862060547, Angle = 84.2403335571289
+predicted center radius: 86.29117272713827
+Distance to the object from the camera: 109.29 cm
+Real distance is: 100 cm
+
+
+aspect ratio: 1.054053173632564
+ area: 28804.5
+Ball radius in direction of camera center: 98.74616241455077
+Ellipse: Center = (1456.949462890625, 1527.8621826171875), Width = 187.3646697998047, Height = 197.49232482910156, Angle = 145.79238891601562
+predicted center radius: 91.89240128088103
+Distance to the object from the camera: 102.62 cm
+Real distance is: 100 cm
+
+
+aspect ratio: 1.024585640919084
+ area: 33601.5
+Ball radius in direction of camera center: 134.37966918945304
+Ellipse: Center = (1264.3277587890625, 1523.717041015625), Width = 262.3102722167969, Height = 268.75933837890625, Angle = 172.87974548339844
+predicted center radius: 126.74295473052373
+Distance to the object from the camera: 74.41 cm
+Real distance is: 70 cm
+
